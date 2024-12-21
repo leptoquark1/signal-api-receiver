@@ -24,8 +24,7 @@
               ../../go.mod
               ../../go.sum
               ../../main.go
-              ../../receiver
-              ../../server
+              ../../pkg
             ];
             root = ../..;
           };
