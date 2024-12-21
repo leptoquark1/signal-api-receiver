@@ -58,7 +58,7 @@ func TestServeHTTP(t *testing.T) {
 
 			mc := &mockClient{msgs: []receiver.Message{}}
 
-			s := server.New(mc)
+			s := server.New(mc, false)
 
 			hs := httptest.NewServer(s)
 			defer hs.Close()
@@ -77,7 +77,7 @@ func TestServeHTTP(t *testing.T) {
 
 			mc := &mockClient{msgs: []receiver.Message{}}
 
-			s := server.New(mc)
+			s := server.New(mc, false)
 
 			hs := httptest.NewServer(s)
 			defer hs.Close()
@@ -108,7 +108,7 @@ func TestServeHTTP(t *testing.T) {
 
 			mc := &mockClient{msgs: []receiver.Message{}}
 
-			s := server.New(mc)
+			s := server.New(mc, false)
 
 			hs := httptest.NewServer(s)
 			defer hs.Close()
@@ -143,6 +143,39 @@ func TestServeHTTP(t *testing.T) {
 
 			assert.Equal(t, want, got)
 		})
+
+		t.Run("can repeat last message if enabled", func(t *testing.T) {
+			t.Parallel()
+
+			mc := &mockClient{msgs: []receiver.Message{}}
+
+			s := server.New(mc, true)
+
+			hs := httptest.NewServer(s)
+			defer hs.Close()
+
+			want := receiver.Message{Account: "0"}
+			mc.msgs = []receiver.Message{want}
+
+			for i := 0; i < 3; i++ {
+				//nolint:noctx
+				resp, err := http.Get(hs.URL + "/receive/pop")
+				require.NoError(t, err)
+
+				defer resp.Body.Close()
+
+				assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+				body, err := io.ReadAll(resp.Body)
+				require.NoError(t, err)
+
+				var got receiver.Message
+
+				require.NoError(t, json.Unmarshal(body, &got))
+
+				assert.Equal(t, want, got)
+			}
+		})
 	})
 
 	t.Run("GET /receive/flush", func(t *testing.T) {
@@ -153,7 +186,7 @@ func TestServeHTTP(t *testing.T) {
 
 			mc := &mockClient{msgs: []receiver.Message{}}
 
-			s := server.New(mc)
+			s := server.New(mc, false)
 
 			hs := httptest.NewServer(s)
 			defer hs.Close()
@@ -183,7 +216,7 @@ func TestServeHTTP(t *testing.T) {
 
 			mc := &mockClient{msgs: []receiver.Message{}}
 
-			s := server.New(mc)
+			s := server.New(mc, false)
 
 			hs := httptest.NewServer(s)
 			defer hs.Close()
@@ -214,7 +247,7 @@ func TestServeHTTP(t *testing.T) {
 
 			mc := &mockClient{msgs: []receiver.Message{}}
 
-			s := server.New(mc)
+			s := server.New(mc, false)
 
 			hs := httptest.NewServer(s)
 			defer hs.Close()
@@ -254,7 +287,7 @@ func TestServeHTTP(t *testing.T) {
 
 				mc := &mockClient{msgs: []receiver.Message{}}
 
-				s := server.New(mc)
+				s := server.New(mc, false)
 
 				hs := httptest.NewServer(s)
 				defer hs.Close()
@@ -273,7 +306,7 @@ func TestServeHTTP(t *testing.T) {
 
 				mc := &mockClient{msgs: []receiver.Message{}}
 
-				s := server.New(mc)
+				s := server.New(mc, false)
 
 				hs := httptest.NewServer(s)
 				defer hs.Close()
@@ -292,7 +325,7 @@ func TestServeHTTP(t *testing.T) {
 
 				mc := &mockClient{msgs: []receiver.Message{}}
 
-				s := server.New(mc)
+				s := server.New(mc, false)
 
 				hs := httptest.NewServer(s)
 				defer hs.Close()
