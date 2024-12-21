@@ -1,6 +1,7 @@
-package server
+package server_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/kalbasit/signal-api-receiver/receiver"
+	"github.com/kalbasit/signal-api-receiver/server"
 )
 
 type mockClient struct {
@@ -31,19 +33,29 @@ func (mc *mockClient) Pop() *receiver.Message {
 func (mc *mockClient) Flush() []receiver.Message {
 	msgs := mc.msgs
 	mc.msgs = []receiver.Message{}
+
 	return msgs
 }
 
 func TestServeHTTP(t *testing.T) {
-	mc := &mockClient{msgs: []receiver.Message{}}
-	s := Server{sarc: mc}
-	hs := httptest.NewServer(&s)
-	defer hs.Close()
+	t.Parallel()
 
 	t.Run("GET /receive/pop", func(t *testing.T) {
+		t.Parallel()
+
 		t.Run("no messages in the queue", func(t *testing.T) {
+			t.Parallel()
+
+			mc := &mockClient{msgs: []receiver.Message{}}
+
+			s := server.New(mc)
+
+			hs := httptest.NewServer(s)
+			defer hs.Close()
+
 			mc.msgs = []receiver.Message{}
 
+			//nolint:noctx
 			resp, err := http.Get(hs.URL + "/receive/pop")
 			require.NoError(t, err)
 
@@ -51,9 +63,19 @@ func TestServeHTTP(t *testing.T) {
 		})
 
 		t.Run("one message in the queue", func(t *testing.T) {
+			t.Parallel()
+
+			mc := &mockClient{msgs: []receiver.Message{}}
+
+			s := server.New(mc)
+
+			hs := httptest.NewServer(s)
+			defer hs.Close()
+
 			want := receiver.Message{Account: "0"}
 			mc.msgs = []receiver.Message{want}
 
+			//nolint:noctx
 			resp, err := http.Get(hs.URL + "/receive/pop")
 			require.NoError(t, err)
 
@@ -65,12 +87,22 @@ func TestServeHTTP(t *testing.T) {
 			require.NoError(t, err)
 
 			var got receiver.Message
+
 			require.NoError(t, json.Unmarshal(body, &got))
 
 			assert.Equal(t, want, got)
 		})
 
 		t.Run("three messages in the queue", func(t *testing.T) {
+			t.Parallel()
+
+			mc := &mockClient{msgs: []receiver.Message{}}
+
+			s := server.New(mc)
+
+			hs := httptest.NewServer(s)
+			defer hs.Close()
+
 			want := []receiver.Message{
 				{Account: "0"},
 				{Account: "1"},
@@ -81,6 +113,7 @@ func TestServeHTTP(t *testing.T) {
 			var got []receiver.Message
 
 			for range want {
+				//nolint:noctx
 				resp, err := http.Get(hs.URL + "/receive/pop")
 				require.NoError(t, err)
 
@@ -92,7 +125,9 @@ func TestServeHTTP(t *testing.T) {
 				require.NoError(t, err)
 
 				var m receiver.Message
+
 				require.NoError(t, json.Unmarshal(body, &m))
+
 				got = append(got, m)
 			}
 
@@ -101,9 +136,21 @@ func TestServeHTTP(t *testing.T) {
 	})
 
 	t.Run("GET /receive/flush", func(t *testing.T) {
+		t.Parallel()
+
 		t.Run("no messages in the queue", func(t *testing.T) {
+			t.Parallel()
+
+			mc := &mockClient{msgs: []receiver.Message{}}
+
+			s := server.New(mc)
+
+			hs := httptest.NewServer(s)
+			defer hs.Close()
+
 			mc.msgs = []receiver.Message{}
 
+			//nolint:noctx
 			resp, err := http.Get(hs.URL + "/receive/flush")
 			require.NoError(t, err)
 
@@ -115,15 +162,26 @@ func TestServeHTTP(t *testing.T) {
 			require.NoError(t, err)
 
 			var got []receiver.Message
+
 			require.NoError(t, json.Unmarshal(body, &got))
 
 			assert.Empty(t, got)
 		})
 
 		t.Run("one message in the queue", func(t *testing.T) {
+			t.Parallel()
+
+			mc := &mockClient{msgs: []receiver.Message{}}
+
+			s := server.New(mc)
+
+			hs := httptest.NewServer(s)
+			defer hs.Close()
+
 			want := []receiver.Message{{Account: "0"}}
 			mc.msgs = want
 
+			//nolint:noctx
 			resp, err := http.Get(hs.URL + "/receive/flush")
 			require.NoError(t, err)
 
@@ -135,12 +193,22 @@ func TestServeHTTP(t *testing.T) {
 			require.NoError(t, err)
 
 			var got []receiver.Message
+
 			require.NoError(t, json.Unmarshal(body, &got))
 
 			assert.Equal(t, want, got)
 		})
 
 		t.Run("three messages in the queue", func(t *testing.T) {
+			t.Parallel()
+
+			mc := &mockClient{msgs: []receiver.Message{}}
+
+			s := server.New(mc)
+
+			hs := httptest.NewServer(s)
+			defer hs.Close()
+
 			want := []receiver.Message{
 				{Account: "0"},
 				{Account: "1"},
@@ -148,6 +216,7 @@ func TestServeHTTP(t *testing.T) {
 			}
 			mc.msgs = want
 
+			//nolint:noctx
 			resp, err := http.Get(hs.URL + "/receive/flush")
 			require.NoError(t, err)
 
@@ -159,6 +228,7 @@ func TestServeHTTP(t *testing.T) {
 			require.NoError(t, err)
 
 			var got []receiver.Message
+
 			require.NoError(t, json.Unmarshal(body, &got))
 
 			assert.Equal(t, want, got)
@@ -166,30 +236,63 @@ func TestServeHTTP(t *testing.T) {
 	})
 
 	t.Run("anything else", func(t *testing.T) {
-		mc.msgs = []receiver.Message{}
+		t.Parallel()
 
 		for _, verb := range []string{"POST", "PUT", "PATCH", "DELETE"} {
 			t.Run(verb+" /", func(t *testing.T) {
-				r, err := http.NewRequest(verb, hs.URL, nil)
+				t.Parallel()
+
+				mc := &mockClient{msgs: []receiver.Message{}}
+
+				s := server.New(mc)
+
+				hs := httptest.NewServer(s)
+				defer hs.Close()
+
+				r, err := http.NewRequestWithContext(context.Background(), verb, hs.URL, nil)
 				require.NoError(t, err)
+
 				resp, err := http.DefaultClient.Do(r)
 				require.NoError(t, err)
+
 				assert.Equal(t, http.StatusForbidden, resp.StatusCode)
 			})
 
 			t.Run(verb+" /receive/flush", func(t *testing.T) {
-				r, err := http.NewRequest(verb, hs.URL+"/receive/flush", nil)
+				t.Parallel()
+
+				mc := &mockClient{msgs: []receiver.Message{}}
+
+				s := server.New(mc)
+
+				hs := httptest.NewServer(s)
+				defer hs.Close()
+
+				r, err := http.NewRequestWithContext(context.Background(), verb, hs.URL+"/receive/flush", nil)
 				require.NoError(t, err)
+
 				resp, err := http.DefaultClient.Do(r)
 				require.NoError(t, err)
+
 				assert.Equal(t, http.StatusForbidden, resp.StatusCode)
 			})
 
 			t.Run(verb+" /receive/pop", func(t *testing.T) {
-				r, err := http.NewRequest(verb, hs.URL+"/receive/pop", nil)
+				t.Parallel()
+
+				mc := &mockClient{msgs: []receiver.Message{}}
+
+				s := server.New(mc)
+
+				hs := httptest.NewServer(s)
+				defer hs.Close()
+
+				r, err := http.NewRequestWithContext(context.Background(), verb, hs.URL+"/receive/pop", nil)
 				require.NoError(t, err)
+
 				resp, err := http.DefaultClient.Do(r)
 				require.NoError(t, err)
+
 				assert.Equal(t, http.StatusForbidden, resp.StatusCode)
 			})
 		}
