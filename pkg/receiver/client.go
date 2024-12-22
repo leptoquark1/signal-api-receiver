@@ -19,6 +19,9 @@ type Client struct {
 
 	logger zerolog.Logger
 
+	recordedMessageTypesStrs []string
+	recordedMessageTypes     map[MessageType]bool
+
 	mu       sync.Mutex
 	messages []Message
 }
@@ -26,8 +29,22 @@ type Client struct {
 // New creates a new Signal API client and returns it.
 // An error is returned if a websocket fails to open with the Signal's API
 // /v1/receive.
-func New(ctx context.Context, uri *url.URL) (*Client, error) {
-	c := &Client{uri: uri, logger: *zerolog.Ctx(ctx)}
+func New(ctx context.Context, uri *url.URL, messageTypes ...string) (*Client, error) {
+	c := &Client{
+		uri:                      uri,
+		logger:                   *zerolog.Ctx(ctx),
+		recordedMessageTypesStrs: messageTypes,
+		recordedMessageTypes:     make(map[MessageType]bool),
+	}
+
+	for _, mts := range messageTypes {
+		mt, err := ParseMessageType(mts)
+		if err != nil {
+			return nil, fmt.Errorf("could not parse message type %q: %w", mts, err)
+		}
+
+		c.recordedMessageTypes[mt] = true
+	}
 
 	return c, c.Connect()
 }
@@ -56,7 +73,10 @@ func (c *Client) Connect() error {
 func (c *Client) ReceiveLoop() error {
 	log := c.logger.With().Str("func", "ReceiveLoop").Logger()
 
-	log.Info().Msg("Starting the receive loop from Signal API")
+	log.
+		Info().
+		Strs("recorded-message-types", c.recordedMessageTypesStrs).
+		Msg("Starting the receive loop from Signal API")
 
 	for {
 		_, msg, err := c.conn.ReadMessage()
@@ -107,8 +127,7 @@ func (c *Client) recordMessage(msg []byte) {
 		return
 	}
 
-	// Do not record receipt, typing, group update or sync messages, etc.
-	if m.Envelope.DataMessage == nil || m.Envelope.DataMessage.Message == nil {
+	if !c.shouldRecordMessage(m) {
 		//nolint:zerologlint
 		if c.logger.Debug().Enabled() {
 			c.logger.
@@ -143,4 +162,14 @@ func (c *Client) recordMessage(msg []byte) {
 			Strs("message-types", m.MessageTypesStrings()).
 			Msg("a signal message was successfully recorded")
 	}
+}
+
+func (c *Client) shouldRecordMessage(m Message) bool {
+	for _, mt := range m.MessageTypes() {
+		if c.recordedMessageTypes[mt] {
+			return true
+		}
+	}
+
+	return false
 }
