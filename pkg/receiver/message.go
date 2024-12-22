@@ -1,21 +1,102 @@
 package receiver
 
+import (
+	"errors"
+	"fmt"
+)
+
+// ErrMessageTypeUnknown is returned if message type (string) is not known.
+var ErrMessageTypeUnknown = errors.New("message type is unknown")
+
+// MessageType represents a type of a message.
+type MessageType uint8
+
+const (
+	MessageTypeUnknown MessageType = iota
+
+	// MessageTypeReceipt represents a message that has a receipt.
+	MessageTypeReceipt
+
+	// MessageTypeTyping represents a message that has a typing.
+	MessageTypeTyping
+
+	// MessageTypeData represents a message that has data.
+	MessageTypeData
+
+	// MessageTypeDataMessage represents a message that has data and has a message.
+	MessageTypeDataMessage
+
+	// MessageTypeSync represents a message that has a sync.
+	MessageTypeSync
+)
+
+// AllMessageTypes returns all valid message types.
+func AllMessageTypes() []MessageType {
+	return []MessageType{
+		MessageTypeReceipt,
+		MessageTypeTyping,
+		MessageTypeData,
+		MessageTypeDataMessage,
+		MessageTypeSync,
+	}
+}
+
+// String returns the string representation of a message type.
+func (mt MessageType) String() string {
+	switch mt {
+	case MessageTypeReceipt:
+		return "receipt"
+	case MessageTypeTyping:
+		return "typing"
+	case MessageTypeData:
+		return "data"
+	case MessageTypeDataMessage:
+		return "data-message"
+	case MessageTypeSync:
+		return "sync"
+	case MessageTypeUnknown:
+		fallthrough
+	default:
+		panic(fmt.Sprintf("unknown message type %d", mt))
+	}
+}
+
+// ParseMessageType parses a message type given its representation as a string.
+func ParseMessageType(mt string) (MessageType, error) {
+	switch mt {
+	case "receipt":
+		return MessageTypeReceipt, nil
+	case "typing":
+		return MessageTypeTyping, nil
+	case "data":
+		return MessageTypeData, nil
+	case "data-message":
+		return MessageTypeDataMessage, nil
+	case "sync":
+		return MessageTypeSync, nil
+	default:
+		return MessageTypeUnknown, ErrMessageTypeUnknown
+	}
+}
+
 // Message defines the message structure received from the Signal API.
 type Message struct {
-	Envelope struct {
-		Source         string          `json:"source"`
-		SourceNumber   string          `json:"sourceNumber"`
-		SourceUUID     string          `json:"sourceUuid"`
-		SourceName     string          `json:"sourceName"`
-		SourceDevice   int             `json:"sourceDevice"`
-		Timestamp      int64           `json:"timestamp"`
-		ReceiptMessage *ReceiptMessage `json:"receiptMessage,omitempty"`
-		TypingMessage  *TypingMessage  `json:"typingMessage,omitempty"`
-		DataMessage    *DataMessage    `json:"dataMessage,omitempty"`
-		SyncMessage    *struct{}       `json:"syncMessage,omitempty"`
-	} `json:"envelope"`
+	Account  string   `json:"account"`
+	Envelope Envelope `json:"envelope"`
+}
 
-	Account string `json:"account"`
+// Envelope represents a message envelope.
+type Envelope struct {
+	Source         string          `json:"source"`
+	SourceNumber   string          `json:"sourceNumber"`
+	SourceUUID     string          `json:"sourceUuid"`
+	SourceName     string          `json:"sourceName"`
+	SourceDevice   int             `json:"sourceDevice"`
+	Timestamp      int64           `json:"timestamp"`
+	ReceiptMessage *ReceiptMessage `json:"receiptMessage,omitempty"`
+	TypingMessage  *TypingMessage  `json:"typingMessage,omitempty"`
+	DataMessage    *DataMessage    `json:"dataMessage,omitempty"`
+	SyncMessage    *struct{}       `json:"syncMessage,omitempty"`
 }
 
 // ReceiptMessage represents a receipt message.
@@ -80,4 +161,44 @@ type Attachment struct {
 	Height          *int    `json:"height"`
 	Caption         *string `json:"caption"`
 	UploadTimestamp *int64  `json:"uploadTimestamp"`
+}
+
+// MessageTypes returns the types of a message.
+func (m Message) MessageTypes() []MessageType {
+	mts := make([]MessageType, 0)
+
+	if m.Envelope.ReceiptMessage != nil {
+		mts = append(mts, MessageTypeReceipt)
+	}
+
+	if m.Envelope.TypingMessage != nil {
+		mts = append(mts, MessageTypeTyping)
+	}
+
+	if m.Envelope.DataMessage != nil {
+		mts = append(mts, MessageTypeData)
+
+		if m.Envelope.DataMessage.Message != nil {
+			mts = append(mts, MessageTypeDataMessage)
+		}
+	}
+
+	if m.Envelope.SyncMessage != nil {
+		mts = append(mts, MessageTypeSync)
+	}
+
+	return mts
+}
+
+// MessageTypes returns the types of a message encoded as a string.
+func (m Message) MessageTypesStrings() []string {
+	mts := m.MessageTypes()
+
+	ss := make([]string, 0, len(mts))
+
+	for _, mt := range mts {
+		ss = append(ss, mt.String())
+	}
+
+	return ss
 }
