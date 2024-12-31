@@ -98,20 +98,19 @@ func TestServeHTTP(t *testing.T) {
 			resp, err := http.Get(hs.URL + "/receive/pop")
 			require.NoError(t, err)
 
-			want := receiver.Message{}
-
 			assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 			body, err := io.ReadAll(resp.Body)
 			require.NoError(t, err)
 
-			assert.Equal(t, "{}", string(body))
-
-			var got receiver.Message
+			want := server.NilMessage{}
+			var got server.NilMessage
 
 			require.NoError(t, json.Unmarshal(body, &got))
-
 			assert.Equal(t, want, got)
+
+			assert.Nil(t, got.Account)
+			assert.Empty(t, got.Envelope)
 		})
 
 		t.Run("one message in the queue", func(t *testing.T) {
@@ -527,7 +526,15 @@ func TestRepeatLastMessage(t *testing.T) {
 				if !withRepeatFeature {
 					body, err := io.ReadAll(resp.Body)
 					require.NoError(t, err)
-					require.Equal(t, "{}", string(body))
+
+					want := server.NilMessage{}
+					var got server.NilMessage
+
+					require.NoError(t, json.Unmarshal(body, &got))
+					assert.Equal(t, want, got)
+
+					assert.Nil(t, got.Account)
+					assert.Empty(t, got.Envelope)
 
 					return
 				}
