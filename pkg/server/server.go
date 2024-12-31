@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -98,13 +99,15 @@ func (s *Server) receivePop(w http.ResponseWriter, _ *http.Request) {
 		}
 	}
 
+	w.Header().Set(contentType, contentTypeJSON)
+
 	if msg == nil {
-		w.WriteHeader(http.StatusNoContent)
+		if _, err := fmt.Fprint(w, "{}"); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
 
 		return
 	}
-
-	w.Header().Set(contentType, contentTypeJSON)
 
 	if err := json.NewEncoder(w).Encode(msg); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
