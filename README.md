@@ -58,7 +58,7 @@ specific use case.
 `signal-api-receiver` is available as a Docker image on [Docker Hub]. This is the recommended way to run the application.
 
 ```bash
-docker pull kalbasit/signal-api-receiver:latest
+docker pull leptoquark1/signal-api-receiver:latest
 ```
 
 Here's an example docker run command:
@@ -67,7 +67,7 @@ Here's an example docker run command:
 docker run -p 8105:8105 \
   -e SIGNAL_ACCOUNT="your_signal_account" \
   -e SIGNAL_API_URL="wss://your-signal-api-url" \
-  kalbasit/signal-api-receiver:latest
+  leptoquark1/signal-api-receiver:latest
 ```
 
 **Explanation**:
@@ -136,7 +136,7 @@ spec:
         tier: api
     spec:
       containers:
-        - image: kalbasit/signal-receiver:latest
+        - image: leptoquark1/signal-receiver:latest
           name: signal-receiver
           args:
             - /bin/signal-api-receiver
@@ -223,7 +223,7 @@ spec:
 This project is licensed under the MIT License - see the [LICENSE](/LICENSE) file for details.
 
 [@bbernhard]: https://github.com/bbernhard
-[docker hub]: https://hub.docker.com/r/kalbasit/signal-api-receiver
+[docker hub]: https://hub.docker.com/r/leptoquark1/signal-api-receiver
 [exec-mode]: https://github.com/bbernhard/signal-cli-rest-api?tab=readme-ov-file#execution-modes
-[signal-cli-rest-api]: https://github.com/bbernhard/signal-cli-rest-api
+[signal-cli-rest-api]: https://github.com/leptoquark1/signal-cli-rest-api
 [signal_messenger]: https://www.home-assistant.io/integrations/signal_messenger/#sending-messages-to-signal-to-trigger-events

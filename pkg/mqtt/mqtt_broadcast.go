@@ -10,7 +10,7 @@ import (
 
 	"github.com/eclipse/paho.golang/autopaho"
 	"github.com/eclipse/paho.golang/paho"
-	"github.com/kalbasit/signal-api-receiver/pkg/receiver"
+	"github.com/leptoquark1/signal-api-receiver/pkg/receiver"
 	"github.com/rs/zerolog"
 )
 

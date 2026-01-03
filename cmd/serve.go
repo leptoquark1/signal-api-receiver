@@ -16,9 +16,9 @@ import (
 	"github.com/urfave/cli/v3"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/kalbasit/signal-api-receiver/pkg/mqtt"
-	"github.com/kalbasit/signal-api-receiver/pkg/receiver"
-	"github.com/kalbasit/signal-api-receiver/pkg/server"
+	"github.com/leptoquark1/signal-api-receiver/pkg/mqtt"
+	"github.com/leptoquark1/signal-api-receiver/pkg/receiver"
+	"github.com/leptoquark1/signal-api-receiver/pkg/server"
 )
 
 var (
