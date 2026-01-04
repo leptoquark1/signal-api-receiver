@@ -6,10 +6,11 @@ import (
 	"os"
 	"time"
 
-	"github.com/leptoquark1/signal-api-receiver/pkg/errors"
 	"github.com/rs/zerolog"
 	"github.com/urfave/cli/v3"
 	"golang.org/x/term"
+
+	"github.com/leptoquark1/signal-api-receiver/pkg/localerror"
 )
 
 // Version defines the version of the binary, and is meant to be set with ldflags at build time.
@@ -47,7 +48,7 @@ func beforeFunc(ctx context.Context, cmd *cli.Command) (context.Context, error) 
 
 	lvl, err := zerolog.ParseLevel(logLvl)
 	if err != nil {
-		return ctx, errors.LogLevelFormatError(logLvl)
+		return ctx, localerror.LogLevelFormatError(logLvl)
 	}
 
 	var output io.Writer = os.Stdout

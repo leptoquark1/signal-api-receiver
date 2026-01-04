@@ -203,7 +203,7 @@ func (m Message) MessageTypesStrings() []string {
 	return ss
 }
 
-var NewMessage newMessage
+var NewMessage newMessage //nolint: gochecknoglobals
 
 type NewMessagePayload struct {
 	Message Message
