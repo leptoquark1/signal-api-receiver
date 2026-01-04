@@ -2,7 +2,6 @@ package mqtt
 
 import (
 	"context"
-	"fmt"
 	"net/url"
 	"strings"
 
@@ -10,6 +9,7 @@ import (
 
 	"github.com/eclipse/paho.golang/autopaho"
 	"github.com/eclipse/paho.golang/paho"
+	"github.com/leptoquark1/signal-api-receiver/pkg/errors"
 	"github.com/leptoquark1/signal-api-receiver/pkg/receiver"
 	"github.com/rs/zerolog"
 )
@@ -30,7 +30,7 @@ type newMessageNotifier struct {
 func Init(
 	ctx context.Context,
 	server string,
-	clientId string,
+	clientID string,
 	user string,
 	password string,
 	topicPrefix string,
@@ -41,28 +41,29 @@ func Init(
 	if !strings.HasPrefix(server, "mqtt://") {
 		server = strings.Join([]string{"mqtt://", server}, "")
 	}
-	serverUrl, err := url.Parse(server)
+	serverURL, err := url.Parse(server)
 
 	if err != nil {
 		logger.Error().Msgf("error while parsing the MQTT server url %s: %v", server, err)
+
 		return err
 	}
 
 	conn, err := autopaho.NewConnection(ctx, autopaho.ClientConfig{
-		ServerUrls:                    []*url.URL{serverUrl},
+		ServerUrls:                    []*url.URL{serverURL},
 		ConnectUsername:               user,
 		ConnectPassword:               []byte(password),
 		CleanStartOnInitialConnection: false,
 		SessionExpiryInterval:         60,
 		KeepAlive:                     20,
-		OnConnectionUp: func(cm *autopaho.ConnectionManager, connAck *paho.Connack) {
+		OnConnectionUp: func(_ *autopaho.ConnectionManager, connAck *paho.Connack) {
 			logger.Info().Msg("MQTT: connection successfully established.")
 		},
 		OnConnectError: func(err error) {
 			logger.Error().Msgf("error whilst attempting MQTT connection: %s\n", err)
 		},
 		ClientConfig: paho.ClientConfig{
-			ClientID: clientId,
+			ClientID: clientID,
 			OnClientError: func(err error) {
 				logger.Error().Msgf("MQTT client error: %s\n", err)
 			},
@@ -77,11 +78,11 @@ func Init(
 	})
 
 	if err != nil {
-		return fmt.Errorf("error whilst attempting MQTT connection: %w", err)
+		return errors.MqttConnectionAttemptError(err)
 	}
 
 	if err = conn.AwaitConnection(ctx); err != nil {
-		return fmt.Errorf("MQTT error while waiting for connection: %w", err)
+		return errors.MqttConnectionFailedError(err)
 	}
 
 	receiver.NewMessage.Register(newMessageNotifier{
@@ -107,7 +108,9 @@ func (m newMessageNotifier) Handle(messagePayload receiver.NewMessagePayload) {
 	m.Logger.Debug().Msg("MQTT: Broadcast new message")
 
 	payloadFormat := byte(1)
-	payload, err := json.Marshal(publishPayload{Message: &messagePayload.Message, Types: messagePayload.Message.MessageTypesStrings()})
+	payload, err := json.Marshal(
+		publishPayload{Message: &messagePayload.Message, Types: messagePayload.Message.MessageTypesStrings()},
+	)
 
 	if err != nil {
 		m.Logger.Error().Err(err).Msg("error while stringify message")
@@ -127,6 +130,7 @@ func (m newMessageNotifier) Handle(messagePayload receiver.NewMessagePayload) {
 
 	if err != nil {
 		m.Logger.Error().Err(err).Msgf("error while publishing message")
+
 		return
 	}
 }
