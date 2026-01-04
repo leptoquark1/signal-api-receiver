@@ -2,16 +2,16 @@ package mqtt
 
 import (
 	"context"
+	"encoding/json"
 	"net/url"
 	"strings"
 
-	"encoding/json"
-
 	"github.com/eclipse/paho.golang/autopaho"
 	"github.com/eclipse/paho.golang/paho"
-	"github.com/leptoquark1/signal-api-receiver/pkg/errors"
-	"github.com/leptoquark1/signal-api-receiver/pkg/receiver"
 	"github.com/rs/zerolog"
+
+	"github.com/leptoquark1/signal-api-receiver/pkg/localerror"
+	"github.com/leptoquark1/signal-api-receiver/pkg/receiver"
 )
 
 type config struct {
@@ -41,8 +41,8 @@ func Init(
 	if !strings.HasPrefix(server, "mqtt://") {
 		server = strings.Join([]string{"mqtt://", server}, "")
 	}
-	serverURL, err := url.Parse(server)
 
+	serverURL, err := url.Parse(server)
 	if err != nil {
 		logger.Error().Msgf("error while parsing the MQTT server url %s: %v", server, err)
 
@@ -56,7 +56,7 @@ func Init(
 		CleanStartOnInitialConnection: false,
 		SessionExpiryInterval:         60,
 		KeepAlive:                     20,
-		OnConnectionUp: func(_ *autopaho.ConnectionManager, connAck *paho.Connack) {
+		OnConnectionUp: func(_ *autopaho.ConnectionManager, _ *paho.Connack) {
 			logger.Info().Msg("MQTT: connection successfully established.")
 		},
 		OnConnectError: func(err error) {
@@ -76,13 +76,12 @@ func Init(
 			},
 		},
 	})
-
 	if err != nil {
-		return errors.MqttConnectionAttemptError(err)
+		return localerror.MqttConnectionAttemptError(err)
 	}
 
 	if err = conn.AwaitConnection(ctx); err != nil {
-		return errors.MqttConnectionFailedError(err)
+		return localerror.MqttConnectionFailedError(err)
 	}
 
 	receiver.NewMessage.Register(newMessageNotifier{
@@ -108,12 +107,13 @@ func (m newMessageNotifier) Handle(messagePayload receiver.NewMessagePayload) {
 	m.Logger.Debug().Msg("MQTT: Broadcast new message")
 
 	payloadFormat := byte(1)
+
 	payload, err := json.Marshal(
 		publishPayload{Message: &messagePayload.Message, Types: messagePayload.Message.MessageTypesStrings()},
 	)
-
 	if err != nil {
 		m.Logger.Error().Err(err).Msg("error while stringify message")
+
 		return
 	}
 
@@ -127,7 +127,6 @@ func (m newMessageNotifier) Handle(messagePayload receiver.NewMessagePayload) {
 		},
 		Payload: payload,
 	})
-
 	if err != nil {
 		m.Logger.Error().Err(err).Msgf("error while publishing message")
 

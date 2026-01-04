@@ -1,12 +1,7 @@
 {
-  imports = [
-    ./docker.nix
-    ./signal-api-receiver.nix
-  ];
+  imports = [ ./docker.nix ./signal-api-receiver.nix ];
 
-  perSystem =
-    { config, ... }:
-    {
-      packages.default = config.packages.signal-api-receiver;
-    };
+  perSystem = { config, ... }: {
+    packages.default = config.packages.signal-api-receiver;
+  };
 }

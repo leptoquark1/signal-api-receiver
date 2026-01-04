@@ -8,8 +8,9 @@ import (
 	"sync"
 
 	"github.com/gorilla/websocket"
-	"github.com/leptoquark1/signal-api-receiver/pkg/errors"
 	"github.com/rs/zerolog"
+
+	"github.com/leptoquark1/signal-api-receiver/pkg/localerror"
 )
 
 // Client represents the Signal API client, and is returned by the New() function.
@@ -40,7 +41,7 @@ func New(ctx context.Context, uri *url.URL, messageTypes ...string) (*Client, er
 	for _, mts := range messageTypes {
 		mt, err := ParseMessageType(mts)
 		if err != nil {
-			return nil, errors.MessageParseError(mts, err)
+			return nil, localerror.MessageParseError(mts, err)
 		}
 
 		c.recordedMessageTypes[mt] = true
@@ -59,7 +60,7 @@ func (c *Client) Connect() error {
 
 	conn, _, err := websocket.DefaultDialer.Dial(c.uri.String(), http.Header{})
 	if err != nil {
-		return errors.WebSocketConnectionError(err)
+		return localerror.WebSocketConnectionError(err)
 	}
 
 	c.conn = conn

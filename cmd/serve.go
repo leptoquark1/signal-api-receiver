@@ -15,20 +15,16 @@ import (
 	"github.com/urfave/cli/v3"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/leptoquark1/signal-api-receiver/pkg/errors"
+	"github.com/leptoquark1/signal-api-receiver/pkg/localerror"
 	"github.com/leptoquark1/signal-api-receiver/pkg/mqtt"
 	"github.com/leptoquark1/signal-api-receiver/pkg/receiver"
 	"github.com/leptoquark1/signal-api-receiver/pkg/server"
 )
 
-var (
-	// https://regex101.com/r/sxO3RG/1
-	accountRegex     = regexp.MustCompile(`^\+[0-9]+$`)
-	allowedQosValues = []int{0, 1, 2}
-)
+// https://regex101.com/r/sxO3RG/1
+var accountRegex = regexp.MustCompile(`^\+[0-9]+$`)
 
 func makeRandomClientID() string {
-
 	parts := []string{"signal-api-receiver"}
 
 	netInterfaces, err := net.Interfaces()
@@ -61,7 +57,7 @@ func serveCommand() *cli.Command {
 					for _, mt := range mts {
 						_, err := receiver.ParseMessageType(mt)
 						if err != nil {
-							return errors.MessageTypeParseFormatError(mt, err)
+							return localerror.MessageTypeParseFormatError(mt, err)
 						}
 					}
 
@@ -80,7 +76,7 @@ func serveCommand() *cli.Command {
 				Required: true,
 				Validator: func(a string) error {
 					if !accountRegex.MatchString(a) {
-						return errors.InvalidSignalAccountError()
+						return localerror.InvalidSignalAccountError()
 					}
 
 					return nil
@@ -98,7 +94,7 @@ func serveCommand() *cli.Command {
 					}
 
 					if uri.Scheme == "" {
-						return errors.ErrSchemeMissing
+						return localerror.ErrSchemeMissing
 					}
 
 					return nil
@@ -146,7 +142,7 @@ func serveCommand() *cli.Command {
 					allowedValues := []int{1, 2, 3}
 
 					if !slices.Contains(allowedValues, q) {
-						return errors.MqttQosValueNotAllowedError(q, allowedQosValues)
+						return localerror.MqttQosValueNotAllowedError(q, []int{0, 1, 2})
 					}
 
 					return nil
@@ -184,7 +180,7 @@ func serveAction() cli.ActionFunc {
 
 		uri, err := url.Parse(signalAPIURL)
 		if err != nil {
-			return errors.SignalURLParseError(signalAPIURL, err)
+			return localerror.SignalURLParseError(signalAPIURL, err)
 		}
 
 		uri = uri.JoinPath(fmt.Sprintf("/v1/receive/%s", cmd.String("signal-account")))
@@ -195,7 +191,7 @@ func serveAction() cli.ActionFunc {
 
 		sarc, err := receiver.New(ctx, uri, cmd.StringSlice("record-message-type")...)
 		if err != nil {
-			return errors.ReceiverCreateError(err)
+			return localerror.ReceiverCreateError(err)
 		}
 
 		if cmd.IsSet("mqtt-server") {
@@ -208,9 +204,8 @@ func serveAction() cli.ActionFunc {
 				cmd.String("mqtt-topic-prefix"),
 				cmd.Int("mqtt-qos"),
 			)
-
 			if err != nil {
-				return errors.MqttInitError(err)
+				return localerror.MqttInitError(err)
 			}
 		}
 
@@ -227,7 +222,7 @@ func serveAction() cli.ActionFunc {
 			Msg("Server started")
 
 		if err := server.ListenAndServe(); err != nil {
-			return errors.HttpListenerStartError(err)
+			return localerror.HTTPListenerStartError(err)
 		}
 
 		return nil

@@ -1,4 +1,4 @@
-package errors
+package localerror
 
 import (
 	"errors"
@@ -15,7 +15,7 @@ var (
 	ErrLogLevelFormatError         = errors.New("log level format error")
 	ErrMessageParseError           = errors.New("message parse error")
 	ErrWebSocketConnection         = errors.New("websocket connection error")
-	ErrHttpListenerStartError      = errors.New("http listener start error")
+	ErrHTTPListenerStartError      = errors.New("http listener start error")
 	ErrMessageTypeParseFormatError = errors.New("message type parse format error")
 	ErrSignalURLParseError         = errors.New("signal url parse error")
 	ErrReceiverCreateError         = errors.New("receiver create error")
@@ -86,10 +86,10 @@ func WebSocketConnectionError(err error) error {
 	)
 }
 
-func HttpListenerStartError(err error) error {
+func HTTPListenerStartError(err error) error {
 	return fmt.Errorf(
 		"%w: error starting the HTTP listener: %w",
-		ErrHttpListenerStartError,
+		ErrHTTPListenerStartError,
 		err,
 	)
 }
