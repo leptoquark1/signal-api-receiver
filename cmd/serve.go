@@ -14,6 +14,8 @@ import (
 	"github.com/urfave/cli/v3"
 	"golang.org/x/sync/errgroup"
 
+	mqttconfig "github.com/kalbasit/signal-api-receiver/pkg/mqtt/config"
+
 	"github.com/kalbasit/signal-api-receiver/pkg/mqtt"
 	"github.com/kalbasit/signal-api-receiver/pkg/receiver"
 	"github.com/kalbasit/signal-api-receiver/pkg/server"
@@ -34,6 +36,10 @@ var (
 
 	// ErrMqttInitError is returned if there was an error initializing the mqtt client.
 	ErrMqttInitError = errors.New("mqtt initialization error")
+)
+
+const (
+	MqttCat = "MQTT"
 )
 
 func serveCommand() *cli.Command {
@@ -109,50 +115,73 @@ func serveCommand() *cli.Command {
 				Value:   ":8105",
 			},
 			&cli.StringFlag{
-				Name:    "mqtt-server",
-				Usage:   "MQTT Server Host and Port",
-				Sources: cli.EnvVars("MQTT_SERVER"),
+				Name:     "mqtt-server",
+				Category: MqttCat,
+				Usage:    "Host and Port of the Broker",
+				Sources:  cli.EnvVars("MQTT_SERVER"),
 			},
 			&cli.StringFlag{
-				Name:    "mqtt-client-id",
-				Usage:   "MQTT Client ID",
-				Sources: cli.EnvVars("MQTT_CLIENT_ID"),
+				Name:     "mqtt-client-id",
+				Category: MqttCat,
+				Usage:    "Client ID",
+				Sources:  cli.EnvVars("MQTT_CLIENT_ID"),
 			},
 			&cli.StringFlag{
-				Name:    "mqtt-user",
-				Usage:   "MQTT Username",
-				Sources: cli.EnvVars("MQTT_USER"),
+				Name:     "mqtt-user",
+				Category: MqttCat,
+				Usage:    "Username",
+				Sources:  cli.EnvVars("MQTT_USER"),
 			},
 			&cli.StringFlag{
-				Name:    "mqtt-password",
-				Usage:   "MQTT Password",
-				Sources: cli.EnvVars("MQTT_PASSWORD"),
+				Name:     "mqtt-password",
+				Category: MqttCat,
+				Usage:    "Password",
+				Sources:  cli.EnvVars("MQTT_PASSWORD"),
 			},
 			&cli.StringFlag{
-				Name:    "mqtt-topic-prefix",
-				Usage:   "MQTT Topic Prefix. {topic-prefix}/message",
-				Sources: cli.EnvVars("MQTT_TOPIC_PREFIX"),
-				Value:   "signal-api-receiver",
+				Name:     "mqtt-topic-prefix",
+				Category: MqttCat,
+				Usage:    "Topic Prefix. {topic-prefix}/" + mqttconfig.TopicMessageSuffix,
+				Sources:  cli.EnvVars("MQTT_TOPIC_PREFIX"),
+				Value:    "signal-api-receiver",
 			},
-			&cli.IntFlag{
-				Name:    "mqtt-qos",
-				Usage:   "MQTT Quality of Service (QoS) value",
-				Sources: cli.EnvVars("MQTT_QOS"),
-				Value:   1,
-				Validator: func(q int) error {
-					if !slices.Contains(mqtt.QosValues, q) {
+			&cli.Uint8Flag{
+				Name:     "mqtt-qos",
+				Category: MqttCat,
+				Usage:    "Quality of Service (QoS) value",
+				Sources:  cli.EnvVars("MQTT_QOS"),
+				Value:    1,
+				Validator: func(q uint8) error {
+					if !slices.Contains(mqttconfig.QosValues(), q) {
 						return fmt.Errorf(
 							"%w: %d, allowed values are %v",
 							ErrMqttQosValueNotAllowed,
 							q,
-							mqtt.QosValues,
+							mqttconfig.QosValues(),
 						)
 					}
 
 					return nil
 				},
 			},
+			&cli.BoolFlag{
+				Name:        "mqtt-retain",
+				Category:    MqttCat,
+				Usage:       "If true published messages will be retained",
+				Sources:     cli.EnvVars("MQTT_RETAIN"),
+				Value:       false,
+				DefaultText: "false",
+			},
+			&cli.BoolFlag{
+				Name:        "mqtt-insecure-skip-verify",
+				Category:    MqttCat,
+				DefaultText: "false",
+				Usage:       "Skip server certificate validation for TLS connections",
+				Sources:     cli.EnvVars("MQTT_INSECURE_SKIP_VERIFY"),
+				Value:       false,
+			},
 		},
+		Before: mqtt.ValidateFlags,
 	}
 }
 
@@ -220,13 +249,15 @@ func serveAction() cli.ActionFunc {
 			err := mqtt.Init(
 				ctx,
 				sarc.MessageNotifier,
-				mqtt.InitConfig{
-					Server:      cmd.String("mqtt-server"),
-					ClientID:    clientID,
-					User:        cmd.String("mqtt-user"),
-					Password:    cmd.String("mqtt-password"),
-					TopicPrefix: cmd.String("mqtt-topic-prefix"),
-					Qos:         cmd.Int("mqtt-qos"),
+				mqttconfig.InitOptions{
+					Server:             cmd.String("mqtt-server"),
+					ClientID:           clientID,
+					User:               cmd.String("mqtt-user"),
+					Password:           cmd.String("mqtt-password"),
+					TopicPrefix:        cmd.String("mqtt-topic-prefix"),
+					Qos:                cmd.Uint8("mqtt-qos"),
+					RetainMessages:     cmd.Bool("mqtt-retain"),
+					InsecureSkipVerify: cmd.Bool("mqtt-insecure-skip-verify"),
 				},
 			)
 			if err != nil {

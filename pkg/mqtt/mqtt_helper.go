@@ -1,23 +1,27 @@
 package mqtt
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"net"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/urfave/cli/v3"
+
+	pahop "github.com/eclipse/paho.golang/packets"
+
+	"github.com/kalbasit/signal-api-receiver/pkg/mqtt/config"
 )
-
-//nolint:gochecknoglobals
-var QosValues = []int{0, 1, 2}
-
-const ClientPrefix = "signal-api-receiver"
 
 func MakeClientID(localAddr *net.TCPAddr) string {
 	suffix := strconv.FormatInt(time.Now().Unix(), 10)
 
 	netInterfaces, err := net.Interfaces()
 	if err != nil || len(netInterfaces) == 0 {
-		return ClientPrefix + "-" + suffix
+		return config.ClientPrefix + "-" + suffix
 	}
 
 	// try to determine interface by local address
@@ -42,7 +46,7 @@ func MakeClientID(localAddr *net.TCPAddr) string {
 		)
 	}
 
-	return ClientPrefix + "-" + suffix
+	return config.ClientPrefix + "-" + suffix
 }
 
 func interfaceForLocalAddr(netInterfaces []net.Interface, localAddr *net.TCPAddr) *net.Interface {
@@ -69,4 +73,51 @@ func interfaceForLocalAddr(netInterfaces []net.Interface, localAddr *net.TCPAddr
 	}
 
 	return nil
+}
+
+func isUnrecoverableReasonCodeError(reasonCode byte) bool {
+	switch reasonCode {
+	case pahop.DisconnectProtocolError,
+		pahop.DisconnectNotAuthorized,
+		pahop.DisconnectRetainNotSupported,
+		pahop.DisconnectQoSNotSupported,
+		pahop.DisconnectUseAnotherServer,
+		pahop.DisconnectServerMoved:
+		return true
+	default:
+		return false
+	}
+}
+
+var (
+	// ErrMqttUserAndPasswordRequired is returned if command has some but not all flags (requiredFlagsForMqtt) given.
+	ErrMqttUserAndPasswordRequired = errors.New("some of the required flags for mqtt are missing")
+
+	// Flags required for a functional mqtt configuration
+	// Unauthenticated broker connections are intentionally unsupported.
+	//nolint:gochecknoglobals
+	requiredFlagsForMqtt = []string{"mqtt-server", "mqtt-user", "mqtt-password"}
+)
+
+func ValidateFlags(ctx context.Context, cmd *cli.Command) (context.Context, error) {
+	var flagsSet []string
+
+	for _, name := range requiredFlagsForMqtt {
+		if cmd.IsSet(name) && len(cmd.String(name)) > 0 {
+			flagsSet = append(flagsSet, name)
+		}
+	}
+
+	if len(flagsSet) > 0 && len(flagsSet) < len(requiredFlagsForMqtt) {
+		_ = cli.ShowSubcommandHelp(cmd)
+
+		return nil, fmt.Errorf(
+			"%w: all of %v must be provided, but only got %v",
+			ErrMqttUserAndPasswordRequired,
+			requiredFlagsForMqtt,
+			flagsSet,
+		)
+	}
+
+	return ctx, nil
 }

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
+	"sync/atomic"
 
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog"
@@ -26,8 +27,10 @@ type Client struct {
 	mu       sync.Mutex
 	messages []Message
 
-	MessageNotifier *MessageNotifier
-	notifierTrigger MessageNotifierTrigger
+	MessageNotifier *Notifier
+	notifierTrigger NotifierTrigger
+
+	connected atomic.Bool
 }
 
 // New creates a new Signal API client and returns it.
@@ -54,10 +57,13 @@ func New(ctx context.Context, uri *url.URL, messageTypes ...string) (*Client, er
 		c.recordedMessageTypes[mt] = true
 	}
 
-	return c, c.Connect()
+	// Start notify loop to report state to new handlers
+	go c.notifyLoop(ctx)
+
+	return c, c.Connect(ctx)
 }
 
-func (c *Client) Connect() error {
+func (c *Client) Connect(ctx context.Context) error {
 	if c.conn != nil {
 		c.conn.Close()
 		c.conn = nil
@@ -67,10 +73,19 @@ func (c *Client) Connect() error {
 
 	conn, _, err := websocket.DefaultDialer.Dial(c.uri.String(), http.Header{})
 	if err != nil {
-		return fmt.Errorf("error creating a new websocket connetion: %w", err)
+		return fmt.Errorf("error creating a new websocket connection: %w", err)
 	}
 
 	c.conn = conn
+
+	defaultCloseHandler := c.conn.CloseHandler()
+	c.conn.SetCloseHandler(func(code int, text string) error {
+		c.setConnected(ctx, false)
+
+		return defaultCloseHandler(code, text)
+	})
+
+	c.setConnected(ctx, true)
 
 	return nil
 }
@@ -89,12 +104,27 @@ func (c *Client) ReceiveLoop(ctx context.Context) error {
 	for {
 		_, msg, err := c.conn.ReadMessage()
 		if err != nil {
+			c.setConnected(ctx, false)
 			log.Error().Err(err).Msg("error returned by the websocket")
 
 			return err
 		}
 
 		c.recordMessage(ctx, msg)
+	}
+}
+
+func (c *Client) setConnected(ctx context.Context, isConnected bool) {
+	if c.connected.Swap(isConnected) == isConnected {
+		return
+	}
+
+	if c.notifierTrigger == nil {
+		return
+	}
+
+	if err := c.notifierTrigger(ctx, PrepareNotifierPayload(nil, isConnected)); err != nil {
+		c.logger.Error().Err(err).Bool("isConnected", isConnected).Msg("error while handling notify trigger")
 	}
 }
 
@@ -169,7 +199,7 @@ func (c *Client) recordMessage(ctx context.Context, msg []byte) {
 	c.messages = append(c.messages, m)
 	c.mu.Unlock()
 
-	err := c.notifierTrigger(ctx, MessageNotifierPayload{Message: m})
+	err := c.notifierTrigger(ctx, PrepareNotifierPayload(&m, true))
 	if err != nil {
 		c.logger.Error().Err(err).Msg("error while handling new-message")
 	}
@@ -197,4 +227,16 @@ func (c *Client) shouldRecordMessage(m Message) bool {
 	}
 
 	return false
+}
+
+func (c *Client) notifyLoop(ctx context.Context) {
+	for {
+		if hc := <-c.MessageNotifier.HandlersRegistered(); hc > 0 {
+			isConnected := c.connected.Load()
+
+			if err := c.notifierTrigger(ctx, PrepareNotifierPayload(nil, isConnected)); err != nil {
+				c.logger.Error().Err(err).Bool("isConnected", isConnected).Msg("error while handling notify trigger")
+			}
+		}
+	}
 }

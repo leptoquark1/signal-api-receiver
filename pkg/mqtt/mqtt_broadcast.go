@@ -2,18 +2,21 @@ package mqtt
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/eclipse/paho.golang/autopaho"
 	"github.com/eclipse/paho.golang/paho"
 	"github.com/rs/zerolog"
 
+	"github.com/kalbasit/signal-api-receiver/pkg/mqtt/config"
 	"github.com/kalbasit/signal-api-receiver/pkg/receiver"
 )
 
@@ -23,91 +26,122 @@ var (
 
 	// ErrMqttConnectionFailed is thrown when waiting for connection has failed.
 	ErrMqttConnectionFailed = errors.New("mqtt connection error")
-
-	//nolint:gochecknoglobals
-	initialConnectionTimeout = 5 * time.Second
-
-	//nolint:gochecknoglobals
-	reconnectDelay = 10 * time.Second
 )
 
-type handlerConfig struct {
-	Qos         int
-	TopicPrefix string
+type publishPayload struct {
+	Message *receiver.Message `json:"content"`
+	Types   []string          `json:"types"`
 }
 
 type handlerOpt struct {
-	Logger  zerolog.Logger
-	Config  handlerConfig
-	Topic   string
-	Manager *autopaho.ConnectionManager
+	Logger      zerolog.Logger
+	Config      *config.Config
+	Manager     *autopaho.ConnectionManager
+	connState   int32
+	connStateMu sync.Mutex
 }
 
-type InitConfig struct {
-	Server      string
-	ClientID    string
-	User        string
-	Password    string
-	TopicPrefix string
-	Qos         int
-}
+const (
+	connStateUnknown int32 = -1
+	connStateOffline int32 = 0
+	connStateOnline  int32 = 1
+)
 
 func Init(
 	ctx context.Context,
-	notifier *receiver.MessageNotifier,
-	config InitConfig,
+	notifier *receiver.Notifier,
+	options config.InitOptions,
 ) error {
 	logger := *zerolog.Ctx(ctx)
+	logger = logger.With().Str("scope", "MQTT").Logger()
 
-	if !strings.Contains(config.Server, "://") {
-		config.Server = "mqtt://" + config.Server
+	if !strings.Contains(options.Server, "://") {
+		options.Server = "mqtt://" + options.Server
 	}
 
-	serverURL, err := url.Parse(config.Server)
+	serverURL, err := url.Parse(options.Server)
 	if err != nil {
-		logger.Error().Err(err).Msgf("MQTT: Error while parsing the server url %s", config.Server)
+		logger.Error().Err(err).Msgf("Error while parsing the server url %s", options.Server)
 
 		return err
 	}
 
-	topic := strings.Join([]string{strings.Trim(config.TopicPrefix, "#/ "), "message"}, "/")
+	cfg := config.New(options)
 
-	conn, err := autopaho.NewConnection(ctx, autopaho.ClientConfig{
-		ServerUrls:                    []*url.URL{serverURL},
-		ConnectUsername:               config.User,
-		ConnectPassword:               []byte(config.Password),
-		CleanStartOnInitialConnection: false,
-		SessionExpiryInterval:         60,
-		KeepAlive:                     20,
-		ReconnectBackoff: func(_ int) time.Duration {
-			return reconnectDelay
+	var conn *autopaho.ConnectionManager
+
+	conn, err = autopaho.NewConnection(ctx, autopaho.ClientConfig{
+		ServerUrls: []*url.URL{serverURL},
+		TlsCfg: &tls.Config{
+			InsecureSkipVerify: options.InsecureSkipVerify, //nolint:gosec
 		},
-		OnConnectionUp: func(_ *autopaho.ConnectionManager, _ *paho.Connack) {
+		ConnectUsername:               options.User,
+		ConnectPassword:               []byte(options.Password),
+		CleanStartOnInitialConnection: cfg.CleanStartOnInitialConnection,
+		SessionExpiryInterval:         cfg.SessionExpiryInterval,
+		KeepAlive:                     cfg.KeepAlive,
+		ConnectTimeout:                cfg.ConnectionTimeout,
+		ReconnectBackoff: func(attempt int) time.Duration {
+			switch attempt {
+			case 0:
+				return 0
+			default:
+				return cfg.ReconnectDelay
+			}
+		},
+		OnConnectionUp: func(manager *autopaho.ConnectionManager, _ *paho.Connack) {
 			logger.Info().
-				Str("clientID", config.ClientID).
-				Str("topic", topic).
-				Str("qos", strconv.Itoa(config.Qos)).
-				Msg("MQTT: Connection successfully established.")
+				Str("clientID", options.ClientID).
+				Msg("Connection successfully established.")
+
+			publishOnlineState(ctx, manager, cfg, true)
+		},
+		OnConnectionDown: func() bool {
+			logger.Info().
+				Str("clientID", options.ClientID).
+				Msg("Connection has been lost.")
+
+			return true
 		},
 		OnConnectError: func(err error) {
 			logger.Error().Err(err).
-				Dur("reconnect", reconnectDelay).
-				Msg("MQTT: Error whilst attempting MQTT connection")
+				Str("reconnect_in", strconv.FormatFloat(cfg.ReconnectDelay.Seconds(), 'f', 0, 64)+"sec").
+				Msg("Error whilst attempting MQTT connection")
 		},
+		WillMessage: &paho.WillMessage{
+			Retain:  cfg.StatusRetain,
+			QoS:     cfg.StatusQosValue,
+			Topic:   cfg.Topics.Status,
+			Payload: cfg.StatusOfflinePayload,
+		},
+		WillProperties: cfg.WillProperties,
 		ClientConfig: paho.ClientConfig{
-			ClientID: config.ClientID,
+			ClientID: options.ClientID,
 			OnClientError: func(err error) {
-				logger.Error().Err(err).Msg("MQTT: Client error")
+				logger.Error().Err(err).Msg("Client error")
 			},
 			OnServerDisconnect: func(d *paho.Disconnect) {
-				if d.Properties != nil {
-					logger.Error().Msgf("MQTT: Server requested disconnect: %s", d.Properties.ReasonString)
+				if isUnrecoverableReasonCodeError(d.ReasonCode) {
+					logger.Error().Msgf("Cancel reconnect. Server disconnected with unrecoverable reason-code %d.", d.ReasonCode)
+
+					_ = conn.Disconnect(ctx)
 				} else {
-					logger.Error().Msgf("MQTT: Server requested disconnect; reason code: %d", d.ReasonCode)
+					if d.Properties != nil {
+						logger.Error().Msgf("Server requested disconnect: %s", d.Properties.ReasonString)
+					} else {
+						logger.Error().Msgf("Server requested disconnect; reason code: %d", d.ReasonCode)
+					}
 				}
+			},
+			PublishHook: func(publish *paho.Publish) {
+				logger.Debug().
+					Bool("retain", publish.Retain).
+					Bytes("payload", publish.Payload).
+					Msg("A message was published to " + publish.Topic)
 			},
 		},
 	})
+	// Initial connect will return unrecoverable Connack error
 	if err != nil {
 		return fmt.Errorf(
 			"%w: error whilst attempting mqtt connection: %w",
@@ -116,75 +150,129 @@ func Init(
 		)
 	}
 
-	waitCtx, waitCancel := context.WithTimeout(ctx, initialConnectionTimeout)
-	defer waitCancel()
-
-	if err = conn.AwaitConnection(waitCtx); err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			logger.Warn().
-				Err(err).
-				Dur("timeout", initialConnectionTimeout).
-				Dur("reconnect", reconnectDelay).
-				Msg("MQTT: Initial connection timed out; continuing startup")
-		} else {
-			return fmt.Errorf(
-				"%w: mqtt error while waiting for connection: %w",
-				ErrMqttConnectionFailed,
-				err,
-			)
-		}
-	}
-
-	notifier.RegisterHandler(ctx, handlerOpt{
-		Logger: logger,
-		Topic:  topic,
-		Config: handlerConfig{
-			Qos:         config.Qos,
-			TopicPrefix: config.TopicPrefix,
-		},
+	registerNotifier(ctx, notifier, &handlerOpt{
+		Logger:  logger,
+		Config:  cfg,
 		Manager: conn,
 	})
 
+	waitCtx, waitCancel := context.WithTimeout(ctx, cfg.ConnectionTimeoutInitial)
+	defer waitCancel()
+
+	if err = conn.AwaitConnection(waitCtx); err != nil && !errors.Is(err, context.DeadlineExceeded) {
+		// The initial connection may be slow, but anything that cancels its context is unrecoverable for us too.
+		return fmt.Errorf(
+			"%w: mqtt error while waiting for connection: %w",
+			ErrMqttConnectionFailed,
+			err,
+		)
+	}
+
 	return nil
 }
 
-type publishPayload struct {
-	Message *receiver.Message `json:"content"`
-	Types   []string          `json:"types"`
+func registerNotifier(ctx context.Context, notifier *receiver.Notifier, options *handlerOpt) {
+	options.connState = connStateUnknown
+	notifier.RegisterHandler(ctx, options)
 }
 
-func (m handlerOpt) Handle(ctx context.Context, messagePayload receiver.MessageNotifierPayload) error {
-	m.Logger.Debug().
-		Str("account", messagePayload.Message.Account).
-		Strs("messageTypes", messagePayload.Message.MessageTypesStrings()).
-		Msg("MQTT: Broadcast new message")
+func (m *handlerOpt) Handle(ctx context.Context, messagePayload receiver.NotifierPayload) error {
+	var err error
 
-	payloadFormat := byte(1)
+	if messagePayload.Message != nil {
+		err = m.publishMessage(ctx, messagePayload)
+	}
+
+	desiredConnState := connStateOffline
+	if *messagePayload.IsConnected {
+		desiredConnState = connStateOnline
+	}
+
+	m.connStateMu.Lock()
+	defer m.connStateMu.Unlock()
+
+	if m.connState == connStateUnknown || m.connState != desiredConnState {
+		sErr := m.publishConnectionState(ctx, messagePayload)
+		if sErr == nil {
+			m.connState = desiredConnState
+		} else {
+			err = errors.Join(sErr, err)
+		}
+	}
+
+	return err
+}
+
+func (m *handlerOpt) publishMessage(ctx context.Context, mPayload receiver.NotifierPayload) error {
+	m.Logger.Debug().
+		Str("account", mPayload.Message.Account).
+		Str("source", mPayload.Message.Envelope.Source).
+		Strs("messageTypes", mPayload.Message.MessageTypesStrings()).
+		Msg("Broadcast new message")
 
 	payload, err := json.Marshal(
-		publishPayload{Message: &messagePayload.Message, Types: messagePayload.Message.MessageTypesStrings()},
+		publishPayload{
+			Message: mPayload.Message,
+			Types:   mPayload.Message.MessageTypesStrings(),
+		},
 	)
 	if err != nil {
-		m.Logger.Error().Err(err).Msg("MQTT: Error while marshaling message")
+		m.Logger.Error().Err(err).Msg("Error while marshaling message")
 
 		return err
 	}
 
-	_, err = m.Manager.Publish(ctx, &paho.Publish{
-		QoS:    byte(m.Config.Qos),
-		Topic:  m.Topic,
-		Retain: false,
-		Properties: &paho.PublishProperties{
-			PayloadFormat: &payloadFormat,
-			ContentType:   "application/json",
-		},
-		Payload: payload,
-	})
+	return publish(ctx, m.Manager, &paho.Publish{
+		QoS:        m.Config.Qos,
+		Topic:      m.Config.Topics.Message,
+		Retain:     m.Config.RetainMessages,
+		Properties: m.Config.PublishProperties,
+		Payload:    payload,
+	}, true)
+}
+
+func (m *handlerOpt) publishConnectionState(ctx context.Context, payload receiver.NotifierPayload) error {
+	return publish(ctx, m.Manager, &paho.Publish{
+		QoS:        m.Config.StatusQosValue,
+		Topic:      m.Config.Topics.Connected,
+		Retain:     m.Config.StatusRetain,
+		Properties: m.Config.PublishProperties,
+		Payload:    m.Config.GetStatusPayloadForState(*payload.IsConnected),
+	}, true)
+}
+
+func publishOnlineState(ctx context.Context, manager *autopaho.ConnectionManager, cfg *config.Config, state bool) {
+	_ = publish(ctx, manager, &paho.Publish{
+		QoS:        cfg.StatusQosValue,
+		Topic:      cfg.Topics.Status,
+		Retain:     cfg.StatusRetain,
+		Properties: cfg.PublishProperties,
+		Payload:    cfg.GetStatusPayloadForState(state),
+	}, false)
+}
+
+func publish(
+	ctx context.Context,
+	manager *autopaho.ConnectionManager,
+	publishOptions *paho.Publish,
+	enqueue bool,
+) error {
+	_, err := manager.Publish(ctx, publishOptions)
+
+	if enqueue && errors.Is(err, autopaho.ConnectionDownError) {
+		zerolog.Ctx(ctx).Debug().
+			AnErr("m", autopaho.ConnectionDownError).
+			Interface("id", publishOptions.PacketID).
+			Msg("Message enqueued")
+
+		err = manager.PublishViaQueue(ctx, &autopaho.QueuePublish{Publish: publishOptions})
+		manager.Done()
+	}
+
 	if err != nil {
-		m.Logger.Error().Err(err).Msg("MQTT: Error while publishing message")
-
-		return err
+		zerolog.Ctx(ctx).Error().
+			Err(err).Msg("Error while publishing")
 	}
 
-	return nil
+	return err
 }
